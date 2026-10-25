@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rank Watch</title>
+<meta name="description" content="Live Overwatch competitive ranks for a group of players, by role.">
+<meta property="og:title" content="Rank Watch">
+<meta property="og:description" content="Live Overwatch competitive ranks for a group of players, by role.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,1 30,8.5 30,23.5 16,31 2,23.5 2,8.5' fill='%23e8771f'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Rank Watch (web): live Overwatch competitive ranks for a list of BattleTags, as a grid of player cards.
+   The list lives in the page link (?players=...), so sharing the link shares the list.
+   Data: OverFast API (https://overfast-api.tekrop.fr), which reads Blizzard career profiles. */
+:root {
+  --bg: #eef0f4; --surface: #ffffff; --surface-2: #f5f6f9; --line: #d9dde6;
+  --fg: #171a22; --muted: #5d6475; --accent: #e8771f; --accent-ink: #ffffff;
+  --up: #1f8a4c; --down: #c23a3a; --warn: #b7791f;
+  --f-display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", Consolas, monospace;
+  --r-bronze: #a5683a; --r-silver: #8d97a6; --r-gold: #d4a62a; --r-platinum: #6fa3ad; --r-emerald: #2fa86b;
+  --r-diamond: #5b7fd6; --r-master: #2f9cb3; --r-grandmaster: #8a5ad1; --r-champion: #d6455a;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #0f1218; --surface: #171b24; --surface-2: #1d2230; --line: #2a3142;
+  --fg: #e8ebf2; --muted: #9098ab; --accent: #f28a35; --accent-ink: #1a1006;
+  --up: #46c27c; --down: #ec6767; --warn: #e0a64a; color-scheme: dark;
+} }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 24px 16px 56px; display: grid; gap: 16px; }
+button, input, select { font: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.brand { font: 700 1.15rem var(--f-display); text-transform: uppercase; letter-spacing: .08em; display: flex; align-items: center; gap: 8px; margin: 0; }
+.brand i { width: 12px; height: 12px; background: var(--accent); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+form.add { display: flex; gap: 8px; min-width: 0; }
+.controls input[type=text], .controls select { font: 400 .9rem var(--f-mono); padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--fg); min-width: 0; }
+#tag { width: 16rem; max-width: 100%; }
+.btn { font: 600 .85rem var(--f-display); text-transform: uppercase; letter-spacing: .05em; padding: 8px 12px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: .85rem; color: var(--muted); }
+.status { font: 400 .78rem var(--f-mono); color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.status.on::before { background: var(--up); }
+.status.busy::before { background: var(--accent); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.msg { min-height: 1.2em; font-size: .85rem; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.msg.err { color: var(--down); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
+.card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; position: relative; }
+.card.loading { opacity: .7; }
+.card-hd { padding: 14px; display: flex; gap: 12px; align-items: center; position: relative; min-height: 76px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--c) 32%, var(--surface-2)), var(--surface-2)); }
+.card-hd .nc { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .22; pointer-events: none; }
+.card-hd > *:not(.nc) { position: relative; }
+.avatar { width: 46px; height: 46px; border-radius: 8px; display: grid; place-items: center; font: 700 1.1rem var(--f-display); color: #fff; background: var(--c); flex: none; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.meta { min-width: 0; flex: 1; }
+.name { font: 600 1.05rem var(--f-display); overflow-wrap: anywhere; }
+.tag { font-family: var(--f-mono); font-size: .78rem; color: var(--muted); overflow-wrap: anywhere; }
+.x { position: absolute; top: 6px; right: 6px; border: 0; background: transparent; color: var(--muted); cursor: pointer; font: 600 .75rem var(--f-display); padding: 4px 7px; border-radius: 4px; }
+.x:hover, .x.confirm { background: var(--surface); color: var(--down); }
+.roles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); }
+.roles > div { background: var(--surface); padding: 12px 4px; display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; min-width: 0; }
+.role { font: 600 .68rem var(--f-display); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.role.keep { text-transform: none; }
+.roles > div.sorted { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.roles > div.sorted .role { color: var(--accent); }
+.hex { width: 30px; height: 34px; background: var(--c, var(--line)); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  display: grid; place-items: center; font: 700 .85rem var(--f-display); color: #fff; flex: none; }
+.hex.none { background: var(--line); color: var(--muted); }
+.badge { height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.badge .ri { height: 40px; width: auto; max-width: 100%; }
+.badge .ti { height: 16px; width: auto; max-width: 100%; margin-top: -4px; }
+.rn { font: 600 .8rem var(--f-display); text-transform: capitalize; }
+.rn.none { color: var(--muted); font-weight: 500; }
+.notice { grid-column: 1 / -1; padding: 16px 12px; text-align: center; display: grid; gap: 4px; background: var(--surface); }
+.notice b { font: 600 .8rem var(--f-display); text-transform: uppercase; letter-spacing: .08em; }
+.notice.err b { color: var(--down); } .notice.warn b { color: var(--warn); }
+.notice span { font-size: .8rem; color: var(--muted); }
+.card-ft { padding: 8px 14px; display: flex; gap: 8px; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); font-size: .78rem; flex-wrap: wrap; }
+.card-ft a { color: var(--muted); }
+.card-ft a:hover { color: var(--accent); }
+.empty { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: 8px; padding: 40px 16px; text-align: center; color: var(--muted); }
+.foot { font-size: .8rem; color: var(--muted); margin: 0; max-width: 90ch; }
+.foot a { color: inherit; }
+@media (prefers-reduced-motion: reduce) { .status.busy::before { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <h1 class="brand"><i></i>Rank Watch</h1>
+    <div class="controls">
+      <form class="add" id="add-form">
+        <input type="text" id="tag" placeholder="BattleTag, e.g. Name#1234" aria-label="BattleTag" autocomplete="off" spellcheck="false">
+        <button class="btn primary" type="submit">Add</button>
+      </form>
+      <select id="platform" aria-label="Platform"><option value="pc">PC</option><option value="console">Console</option></select>
+      <select id="sort" aria-label="Sort by">
+        <optgroup label="By rank"><option value="best">Sort: best rank</option><option value="tank">Sort: Tank rank</option><option value="damage">Sort: DMG rank</option><option value="support">Sort: Supp rank</option><option value="open">Sort: 6v6 rank</option></optgroup>
+        <optgroup label="Other"><option value="name">Sort: name</option><option value="added">Sort: order added</option></optgroup>
+      </select>
+      <button class="btn" id="dir" type="button" aria-label="Change sort direction">Highest first</button>
+      <button class="btn" id="refresh" type="button">Refresh all</button>
+      <button class="btn" id="share" type="button">Copy link</button>
+      <label class="chk"><input type="checkbox" id="auto"> Auto every 10 min</label>
+      <span class="status" id="status">Idle</span>
+    </div>
+  </header>
+  <p class="msg" id="msg" role="status"></p>
+  <main class="cards" id="cards"></main>
+  <p class="foot">Ranks come from the free <a href="https://overfast-api.tekrop.fr" target="_blank" rel="noopener">OverFast API</a>, which reads Blizzard career profiles and updates them about every 10 minutes. Players must set their career profile to Public in-game for ranks to show. The player list is part of this page's link: use Copy link to share it, and anyone who opens it sees the same players.</p>
+</div>
+
+<script>
+const API = "https://overfast-api.tekrop.fr";
+const DIVS = ["bronze","silver","gold","platinum","emerald","diamond","master","grandmaster","champion"];
+const ROLES = ["tank","damage","support","open"]; // "open" is the API's open-queue rank, shown as 6v6
+const ROLE_LABEL = { tank: "Tank", damage: "DMG", support: "Supp", open: "6v6" };
+const KEY = "rank-watch-web-v1";
+const AUTO_MS = 10 * 60 * 1000;
+const PARALLEL = 3; // players fetched at once: quick, without hammering the free API
+// shown when the link has no list and this browser has none saved yet
+const DEFAULT_TAGS = ["Ahjetevois#1991", "Joker#229393", "dietcoke#21543", "InkyKod#2553", "ĿǾŴǨƐŶ#2999"];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const toId = tag => tag.trim().replace("#", "-");
+const normTag = s => s.trim().replace(/\s+/g, "").replace(/-(\d+)$/, "#$1");
+const validTag = t => /^[^\s#,]{2,12}#\d{3,6}$/u.test(t);
+
+function message(text, isErr) { $("msg").textContent = text || ""; $("msg").className = "msg" + (isErr ? " err" : ""); }
+
+// ---- the player list: from the link first, else this browser, else the default list ----
+// players: [{ tag, added, data?, fetchedAt?, error? }]; data is cached so revisits show the last ranks at once
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) {}
+let state = { players: [], platform: "pc", sort: "best", reverse: false, auto: true, ...saved };
+const cached = new Map((saved.players || []).map(p => [p.tag.toLowerCase(), p]));
+const fromLink = tagsFromLink();
+const startTags = fromLink || (state.players.length ? null : DEFAULT_TAGS);
+if (startTags) state.players = startTags.map((tag, i) => ({ ...(cached.get(tag.toLowerCase()) || { tag }), added: Date.now() + i }));
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+
+function tagsFromLink() {
+  const raw = new URLSearchParams(location.search).get("players");
+  if (raw === null) return null;
+  const tags = [], seen = new Set();
+  let skipped = 0;
+  for (const part of raw.split(",")) {
+    const tag = normTag(part);
+    if (!tag) continue;
+    if (!validTag(tag)) { skipped++; continue; }
+    if (seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase()); tags.push(tag);
+  }
+  if (skipped) setTimeout(() => message(`Skipped ${skipped} entr${skipped > 1 ? "ies" : "y"} in the link that didn't look like Name#1234.`, true));
+  return tags;
+}
+const listParam = () => state.players.map(p => encodeURIComponent(toId(p.tag))).join(",");
+const shareUrl = () => `${location.origin}${location.pathname}?players=${listParam()}`;
+// keep the address bar in step with the list, so copying it also shares the list
+function reflectUrl() {
+  const isDefault = state.players.length === DEFAULT_TAGS.length && state.players.every((p, i) => p.tag === DEFAULT_TAGS[i]);
+  try { history.replaceState(null, "", isDefault && !fromLink ? location.pathname : `${location.pathname}?players=${listParam()}`); } catch (e) {}
+}
+
+// ---- ranks: a rank is [division, tier]; tier 1 is the top of a division ----
+const DIV_ALIAS = { ultimate: "champion" }; // Blizzard's file name for Champion is "Ultimate"
+const rankOf = r => r ? [DIV_ALIAS[r.division] || r.division, r.tier] : null;
+// a division missing from DIVS (e.g. a new one Blizzard adds) still counts as ranked, just sorted lowest
+const score = r => r ? Math.max(0, DIVS.indexOf(r[0])) * 5 + (5 - r[1]) : -1;
+const comp = p => p.data?.competitive?.[state.platform] || null;
+const ranks = p => { const c = comp(p); const o = {}; for (const k of ROLES) o[k] = rankOf(c?.[k]); return o; };
+const best = p => ROLES.map(k => ranks(p)[k]).reduce((b, r) => score(r) > score(b) ? r : b, null);
+const color = d => `var(--r-${d}, var(--muted))`;
+
+// Sort by one role's rank (or the best across roles), by name, or by order added.
+// Players with no rank in the chosen role always go last, whichever direction is picked.
+function sortPlayers(list) { // items are { p, i }
+  const key = state.sort, dir = state.reverse ? -1 : 1;
+  const byName = (a, b) => a.p.tag.localeCompare(b.p.tag);
+  if (key === "name") return list.sort((a, b) => dir * byName(a, b));
+  if (key === "added") return list.sort((a, b) => dir * ((a.p.added || 0) - (b.p.added || 0) || a.i - b.i));
+  const rank = p => score(key === "best" ? best(p) : ranks(p)[key]);
+  return list.sort((a, b) => {
+    const ra = rank(a.p), rb = rank(b.p);
+    if ((ra < 0) !== (rb < 0)) return ra < 0 ? 1 : -1;
+    return dir * (rb - ra) || score(best(b.p)) - score(best(a.p)) || byName(a, b);
+  });
+}
+function dirLabel() {
+  if (state.sort === "name") return state.reverse ? "Z to A" : "A to Z";
+  if (state.sort === "added") return state.reverse ? "Newest first" : "Oldest first";
+  return state.reverse ? "Lowest first" : "Highest first";
+}
+
+function ago(t) {
+  if (!t) return "never";
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+// ---- fetching ----
+async function fetchPlayer(p) {
+  p.loading = true; render();
+  try {
+    const res = await fetch(`${API}/players/${encodeURIComponent(toId(p.tag))}/summary`);
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      p.data = body; p.error = null; p.fetchedAt = Date.now();
+    } else if (res.status === 404) {
+      // OverFast can't load some names with special characters even though Blizzard has them
+      p.error = /[^\x00-\x7F]/.test(p.tag)
+        ? { kind: "warn", title: "Player not found", text: "OverFast can't load some names with special characters. Their Blizzard profile link below still works." }
+        : { kind: "err", title: "Player not found", text: "Check the spelling and number. BattleTags are case-sensitive." };
+    } else if (res.status === 429) {
+      const wait = res.headers.get("Retry-After");
+      p.error = { kind: "warn", title: "Too many requests", text: `The API asked us to slow down${wait ? `; try again in ${wait}s` : ""}.` };
+    } else {
+      p.error = { kind: "warn", title: "Blizzard data unavailable", text: body?.error?.error || body?.error || `The API returned an error (${res.status}). Try again later.` };
+    }
+  } catch (e) {
+    p.error = { kind: "warn", title: "Can't reach the API", text: "Check your internet connection." };
+  }
+  p.loading = false; save(); render();
+}
+
+let busy = false, lastRun = 0, timer = null;
+async function refreshAll() {
+  if (busy) return;
+  busy = true; $("refresh").disabled = true; setStatus();
+  const queue = [...state.players];
+  const worker = async () => {
+    while (queue.length) {
+      const p = queue.shift();
+      if (state.players.includes(p)) await fetchPlayer(p);
+    }
+  };
+  await Promise.all(Array.from({ length: PARALLEL }, worker));
+  busy = false; $("refresh").disabled = false; lastRun = Date.now(); setStatus();
+}
+
+function setStatus() {
+  const el = $("status");
+  el.className = "status" + (busy ? " busy" : state.auto ? " on" : "");
+  el.textContent = busy ? "Refreshing…" : state.auto ? `Next refresh in ${Math.max(0, Math.ceil((lastRun + AUTO_MS - Date.now()) / 60000))} min` : `Last refresh ${ago(lastRun)}`;
+}
+function schedule() {
+  clearInterval(timer);
+  if (state.auto) timer = setInterval(() => { if (Date.now() - lastRun >= AUTO_MS) refreshAll(); }, 30000);
+}
+
+// ---- rendering ----
+// Blizzard's own badge images when the API gives them, else a coloured hexagon
+function badge(raw, r) {
+  return raw?.rank_icon ? `<span class="badge"><img class="ri" src="${esc(raw.rank_icon)}" alt="">${raw.tier_icon ? `<img class="ti" src="${esc(raw.tier_icon)}" alt="">` : ""}</span>` : `<span class="badge">${hex(r)}</span>`;
+}
+function hex(r) {
+  return r ? `<span class="hex" style="--c:${color(r[0])}">${r[1]}</span>` : `<span class="hex none">–</span>`;
+}
+function rname(r) { return r ? `<span class="rn">${esc(r[0])} ${r[1]}</span>` : `<span class="rn none">Unranked</span>`; }
+
+function card(p, i) {
+  const d = p.data, b = best(p), c = b ? color(b[0]) : "var(--muted)";
+  const name = d?.username || p.tag.split("#")[0];
+  const c2 = comp(p);
+  let middle;
+  if (p.error) middle = `<div class="notice ${p.error.kind}"><b>${esc(p.error.title)}</b><span>${esc(p.error.text)}</span></div>`;
+  else if (!d) middle = `<div class="notice"><b>Loading…</b><span>Fetching career profile</span></div>`;
+  else if (!c2 || ROLES.every(k => !c2[k])) middle = `<div class="notice warn"><b>No ranks visible</b><span>Profile is private, or no ${state.platform === "pc" ? "PC" : "console"} ranks this season.</span></div>`;
+  else middle = ROLES.map(k => `<div${state.sort === k ? ' class="sorted"' : ""}><span class="role${k === "open" ? " keep" : ""}">${ROLE_LABEL[k]}</span>${badge(c2[k], ranks(p)[k])}${rname(ranks(p)[k])}</div>`).join("");
+  return `<article class="card${p.loading ? " loading" : ""}" style="--c:${c}">
+    <div class="card-hd">
+      ${d?.namecard ? `<img class="nc" src="${esc(d.namecard)}" alt="">` : ""}
+      <span class="avatar">${d?.avatar ? `<img src="${esc(d.avatar)}" alt="">` : esc((name[0] || "?").toUpperCase())}</span>
+      <div class="meta"><div class="name">${esc(name)}</div><div class="tag">${esc(p.tag)}</div></div>
+      <button class="x" data-rm="${i}" aria-label="Remove ${esc(p.tag)}">✕</button>
+    </div>
+    <div class="roles">${middle}</div>
+    <div class="card-ft">
+      <span class="tag">${c2?.season ? `Season ${c2.season}` : ""}</span>
+      <span class="tag"><a href="https://overwatch.blizzard.com/en-us/career/${encodeURIComponent(toId(p.tag))}/" target="_blank" rel="noopener">Profile</a> · ${p.loading ? "updating…" : "updated " + ago(p.fetchedAt)}</span>
+    </div>
+  </article>`;
+}
+
+function render() {
+  const list = state.players.map((p, i) => ({ p, i }));
+  sortPlayers(list);
+  $("cards").innerHTML = list.length ? list.map(({ p, i }) => card(p, i)).join("")
+    : `<div class="empty">No players yet. Add a BattleTag above, like <span class="tag">Name#1234</span>.</div>`;
+  setStatus();
+}
+
+// ---- controls ----
+$("add-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const tag = normTag($("tag").value);
+  message("");
+  if (!validTag(tag)) return message("Enter a BattleTag as Name#1234 (name, then # and the number).", true);
+  if (state.players.some(p => p.tag.toLowerCase() === tag.toLowerCase())) return message(`${tag} is already on the list.`, true);
+  const p = { tag, added: Date.now() };
+  state.players.push(p); $("tag").value = ""; save(); reflectUrl(); fetchPlayer(p);
+});
+$("cards").addEventListener("click", e => {
+  const b = e.target.closest("[data-rm]"); if (!b) return;
+  if (!b.classList.contains("confirm")) { // two-step remove
+    b.classList.add("confirm"); b.textContent = "Remove?";
+    setTimeout(() => { if (b.isConnected) { b.classList.remove("confirm"); b.textContent = "✕"; } }, 3000);
+    return;
+  }
+  state.players.splice(+b.dataset.rm, 1); save(); reflectUrl(); render();
+});
+$("share").onclick = async () => {
+  const url = shareUrl();
+  try { await navigator.clipboard.writeText(url); message("Link copied. Anyone who opens it sees this list of players."); }
+  catch (e) { message(`Copy this link to share the list: ${url}`); }
+};
+$("refresh").onclick = refreshAll;
+$("platform").value = state.platform;
+$("platform").onchange = e => { state.platform = e.target.value; save(); render(); };
+$("sort").value = state.sort;
+const syncDir = () => { $("dir").textContent = dirLabel(); };
+$("sort").onchange = e => { state.sort = e.target.value; state.reverse = false; save(); syncDir(); render(); };
+$("dir").onclick = () => { state.reverse = !state.reverse; save(); syncDir(); render(); };
+syncDir();
+$("auto").checked = state.auto;
+$("auto").onchange = e => { state.auto = e.target.checked; save(); schedule(); setStatus(); };
+// coming back to the tab after a while: catch up straight away
+document.addEventListener("visibilitychange", () => { if (!document.hidden && state.auto && Date.now() - lastRun >= AUTO_MS) refreshAll(); });
+setInterval(() => { if (!busy) render(); }, 30000); // keep "x min ago" fresh
+
+save(); reflectUrl(); render(); schedule(); refreshAll();
+</script>
+</body>
+</html>
